@@ -1,0 +1,8 @@
+services:
+  pyee-test:
+    image: masterteslalab/micropython-unix-devenv
+    volumes:
+      - ../:/workspace
+    command: tests/test.py
+    # command: tests/test_async.py
+    # command: tests/test_cls.py
