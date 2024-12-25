@@ -1,3 +1,17 @@
+# pyee-micropython
+
+This is a fork of the [pyee](https://github.com/jfhbrook/pyee) library that has been modified to work with MicroPython.
+
+## Testing
+
+With micropython-unix-devenv(https://github.com/Master-TeslaLab/micropython-unix-devenv) installed, run the docker-compose command to start the container.
+
+## Version
+
+MicroPython v1.24.0
+
+# =================================================================================================
+
 # pyee
 
 [![Documentation Status](https://readthedocs.org/projects/pyee/badge/?version=latest)](https://pyee.readthedocs.io/en/latest/?badge=latest)
