@@ -1,12 +1,61 @@
 # -*- coding: utf-8 -*-
 
-from asyncio import AbstractEventLoop, ensure_future, Future, iscoroutine, wait
-from typing import Any, Callable, cast, Dict, Optional, Set, Tuple
+# from asyncio import ensure_future, Future, iscoroutine, wait
+from asyncio import create_task, Task, get_event_loop, wait_for, gather, TimeoutError
 
 from pyee.base import EventEmitter
 
-__all__ = ["AsyncIOEventEmitter"]
+__all__ = ["AsyncIOEventEmitter", "ensure_future"]
 
+def ensure_future(coro, loop=None):
+    if isinstance(coro, Task):
+        return coro
+    if loop is None:
+        loop = get_event_loop()
+    return loop.create_task(coro)
+
+async def wait(aws):
+    
+    if not aws:
+        return set(), set()
+    
+    tasks = set(ensure_future(aw) for aw in aws)
+    
+    async def _wait_with_timeout():
+        done = set()
+        pending = tasks.copy()
+        
+        while pending:
+            # Wait for next task to complete
+            try:
+                done_task = await wait_for(
+                    gather(*pending, return_exceptions=True),
+                    timeout=None
+                )
+                
+                # Update done/pending sets
+                for task in pending.copy():
+                    if task.done():
+                        done.add(task)
+                        pending.remove(task)
+                        
+                # Check return condition
+                if not pending:
+                    break
+                    
+            except TimeoutError:
+                return done, pending
+    
+        return done, pending
+
+    try:
+        return await _wait_with_timeout()
+    except Exception as e:
+        # Cancel remaining tasks on error
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+        raise
 
 class AsyncIOEventEmitter(EventEmitter):
     """An event emitter class which can run asyncio coroutines in addition to
@@ -36,16 +85,16 @@ class AsyncIOEventEmitter(EventEmitter):
     coroutine is scheduled in a fire-and-forget fashion.
     """
 
-    def __init__(self, loop: Optional[AbstractEventLoop] = None):
+    def __init__(self, loop = None):
         super(AsyncIOEventEmitter, self).__init__()
-        self._loop: Optional[AbstractEventLoop] = loop
-        self._waiting: Set[Future] = set()
+        self._loop = loop
+        self._waiting: set = set()
 
     def emit(
         self,
         event: str,
-        *args: Any,
-        **kwargs: Any,
+        *args,
+        **kwargs,
     ) -> bool:
         """Emit `event`, passing `*args` and `**kwargs` to each attached
         function or coroutine. Returns `True` if any functions are attached to
@@ -69,40 +118,22 @@ class AsyncIOEventEmitter(EventEmitter):
 
     def _emit_run(
         self,
-        f: Callable,
-        args: Tuple[Any, ...],
-        kwargs: Dict[str, Any],
+        f,
+        args: tuple,
+        kwargs: dict,
     ):
         try:
-            coro: Any = f(*args, **kwargs)
+            coro = f(*args, **kwargs)
         except Exception as exc:
             self.emit("error", exc)
         else:
-            if iscoroutine(coro):
-                if self._loop:
-                    # ensure_future is *extremely* cranky about the types here,
-                    # but this is relatively well-tested and I think the types
-                    # are more strict than they should be
-                    fut: Any = ensure_future(cast(Any, coro), loop=self._loop)
-                else:
-                    fut = ensure_future(cast(Any, coro))
-
-            elif isinstance(coro, Future):
-                fut = cast(Any, coro)
+            if self._loop:
+                # ensure_future is *extremely* cranky about the types here,
+                # but this is relatively well-tested and I think the types
+                # are more strict than they should be
+                fut = ensure_future(coro, loop=self._loop)
             else:
-                return
-
-            def callback(f):
-                self._waiting.discard(f)
-
-                if f.cancelled():
-                    return
-
-                exc: Exception = f.exception()
-                if exc:
-                    self.emit("error", exc)
-
-            fut.add_done_callback(callback)
+                fut = ensure_future(coro)
             self._waiting.add(fut)
 
     async def wait_for_complete(self):
@@ -148,7 +179,8 @@ class AsyncIOEventEmitter(EventEmitter):
         attempts at a graceful shutdown via `wait_for_complete` have failed.
         """
         for fut in self._waiting:
-            if not fut.done() and not fut.cancelled():
+            # if not fut.done() and not fut.cancelled():
+            if not fut.done():
                 fut.cancel()
         self._waiting.clear()
 
